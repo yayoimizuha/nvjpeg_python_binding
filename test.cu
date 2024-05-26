@@ -1,15 +1,24 @@
+//
+// Created by tomokazu on 24/05/26.
+//
 #include <iostream>
+//#include <fstream>
 #include <nvjpeg.h>
+//#include <cuda_runtime.h>
 #include <string>
 #include <filesystem>
 #include <algorithm>
 #include <thrust/transform.h>
 #include <thrust/execution_policy.h>
 #include <thrust/device_vector.h>
-#include <nppi_geometry_transforms.h>
-#include <nppdefs.h>
 #include <pybind11/pybind11.h>
-#include <pybind11/numpy.h>
+#include <pybind11/stl.h>
+//#include <format>
+//#include "nameof.hpp"
+#include <nppi_geometry_transforms.h>
+#include <nppi_data_exchange_and_initialization.h>
+#include <nppdefs.h>
+#include <fstream>
 
 #define CHECK_CUDA(call) {cudaError_t _e = (call); if (_e != cudaSuccess){throw runtime_error("CUDA Runtime error at "s+__FILE__+":"s+to_string(__LINE__)+" as #"s+to_string(static_cast<int>(_e)));}}
 #define CHECK_NVJPEG(call) {nvjpegStatus_t _e = (call);if (_e != NVJPEG_STATUS_SUCCESS){throw runtime_error("NVJPEG error at "s+__FILE__+":"s+to_string(__LINE__)+" as #"s+to_string(static_cast<int>(_e)));}}
@@ -94,6 +103,11 @@ decode_image(const vector<unsigned char> &file_data, const string &normalize, pa
     }
 
 
+//    fclose(test);
+//    cout << counter++ << " : " << file_name.path().string() << endl;
+//    cout << "width:" << widths[0] << endl;
+//    cout << "height:" << heights[0] << endl;
+//    cout << image.pitch << endl;
     vector<float> dest(3 * widths[0] * heights[0]);
     thrust::copy(dest_gpu.begin(), dest_gpu.end(), dest.begin());
     if (dest_size.first == -1) {
@@ -104,7 +118,7 @@ decode_image(const vector<unsigned char> &file_data, const string &normalize, pa
     NppiRect dstROI;
     if ((*widths) <= dest_size.first && (*heights) <= dest_size.second) {
         dstROI = {0, 0, *widths, *heights};
-        scale = 0.0f;
+        scale = 1.0f;
     } else {
         if ((*widths) / dest_size.first > (*heights) / dest_size.second) {
             scale = static_cast<double>(dest_size.first) / (*widths);
@@ -118,41 +132,78 @@ decode_image(const vector<unsigned char> &file_data, const string &normalize, pa
     NppiSize dstSize = {dest_size.first, dest_size.second};
     Npp32f *resize_gpu_ptr[4];
     Npp32f *resize_gpu_dst_ptr[4];
-    cudaMalloc(reinterpret_cast<void **>(resize_gpu_dst_ptr), dest_size.first * dest_size.second * sizeof(float) * 4);
-    cudaMemset(reinterpret_cast<float *>(resize_gpu_dst_ptr[0]), 1,
-               dest_size.first * dest_size.second * sizeof(float) * 4);
+//    cudaMalloc(reinterpret_cast<void **>(resize_gpu_dst_ptr), dest_size.first * dest_size.second * sizeof(float) * 4);
+//    cudaMemset(reinterpret_cast<float *>(resize_gpu_dst_ptr[0]), 1,
+//               dest_size.first * dest_size.second * sizeof(float) * 4);
     for (int i = 0; i < 4; ++i) {
         resize_gpu_ptr[i] = thrust::raw_pointer_cast(dest_gpu.data()) + (*widths) * (*heights) * i * sizeof(float);
-        resize_gpu_dst_ptr[i] = resize_gpu_dst_ptr[0] + dest_size.first * dest_size.second * i * sizeof(float);
+//        resize_gpu_dst_ptr[i] = resize_gpu_dst_ptr[0] + dest_size.first * dest_size.second * i * sizeof(float);
+        cudaMalloc(&resize_gpu_dst_ptr[i], dest_size.first * dest_size.second * sizeof(float));
     }
-
-    CHECK_NPP(
-            nppiResize_32f_P4R(const_cast<const Npp32f **>(resize_gpu_ptr), (*widths) * sizeof(Npp32f), srcSize, srcROI,
-                               resize_gpu_dst_ptr, dest_size.first * sizeof(Npp32f), dstSize, dstROI,
-                               NppiInterpolationMode::NPPI_INTER_LANCZOS))
+    CHECK_NPP(nppiResize_32f_P4R(const_cast<const Npp32f **>(resize_gpu_ptr), (*widths) * sizeof(Npp32f), srcSize,
+                                 srcROI, resize_gpu_dst_ptr, dest_size.first * sizeof(Npp32f), dstSize,
+                                 dstROI, NppiInterpolationMode::NPPI_INTER_LANCZOS))
     vector<float> dest_resized(dest_size.first * dest_size.second * 3);
     auto *dest_malloc = static_cast<float *>(malloc(sizeof(float) * dest_size.first * dest_size.second * 3));
-    cudaMemcpy(dest_malloc, resize_gpu_dst_ptr[0], dest_size.first * dest_size.second * 3,
-               cudaMemcpyKind::cudaMemcpyDeviceToHost);
-    std::copy(dest_malloc, dest_malloc + dest_size.first * dest_size.second * 3, dest_resized.begin());
+    for (int i = 0; i < 3; ++i) {
+        cudaMemcpy(dest_malloc + sizeof(float) * dest_size.first * dest_size.second * i, resize_gpu_dst_ptr[i],
+                   dest_size.first * dest_size.second * sizeof(Npp32f),
+                   cudaMemcpyKind::cudaMemcpyDeviceToHost);
+
+    }
+//    std::copy(dest_malloc, dest_malloc + dest_size.first * dest_size.second * 3, dest_resized.begin());
+    for (int i = 0; i < dest_size.first * dest_size.second * 3; ++i) {
+        dest_resized[i] = dest_malloc[i];
+    }
     free(dest_malloc);
-    cudaFree(resize_gpu_dst_ptr[0]);
+    for (auto &i: resize_gpu_dst_ptr) {
+        cudaFree(i);
+    }
     auto return_size = dest_size;
-    return {dest, {scale, return_size}};
-
-
-}
-
-pair<vector<float>, pair<double, pair<int, int>>>
-decode_image_py(const pybind11::array_t<uint8_t, pybind11::array::c_style | pybind11::array::forcecast> &numpy_arr,
-                const string &normalize, pair<int, int> dest_size) {
-    auto buf_info = numpy_arr.request();
-    vector<uint8_t> file_data(reinterpret_cast<uint8_t *>(buf_info.ptr),
-                              reinterpret_cast<uint8_t *>(buf_info.ptr) + buf_info.shape[0]);
-    return decode_image(file_data, normalize, dest_size);
+    cudaDeviceSynchronize();
+    return {dest_resized, {scale, {dest_size.first, dest_size.second}}};
 
 }
 
-PYBIND11_MODULE(nvjpeg_decoder, m) {
-    m.def("decode", &decode_image_py, "pass image binary and return decoded numpy array.");
+
+using namespace std;
+namespace fs = filesystem;
+string source_dir = R"(D:\helloproject-ai-data\blog_images)";
+
+
+int main() {
+//    nvjpegStatus_t status;
+    int cnt = 0;
+    vector<fs::directory_entry> member_names;
+    for (auto &person_name: fs::directory_iterator(source_dir)) {
+        for (auto &file_name: fs::directory_iterator(person_name)) {
+//            cout << file_name.path().string() << endl;
+            member_names.push_back(file_name);
+        }
+    }
+    for (const auto &file: member_names) {
+        ifstream ifs(file.path(), ios::binary);
+//        ifs.seekg(0, ios::end);
+//        auto file_length = ifs.tellg();
+//        ifs.seekg(0, ios::beg);
+//    istream_iterator<unsigned char> begin(ifs), end;
+        vector<unsigned char> file_content(
+                (istreambuf_iterator<char>(ifs)),
+                istreambuf_iterator<char>()
+        );
+
+        ifs.close();
+        cnt++;
+        auto raw_img = decode_image(
+                file_content, "none",
+                {1080, 1080});
+//        cudaFree(raw_img.first);
+        cout << file.path() << endl;
+        cout << raw_img.second.second.first << endl;
+        cout << raw_img.second.second.second << endl;
+        if (cnt == 50) {
+            exit(0);
+        }
+    }
+    return 0;
 }
