@@ -138,15 +138,15 @@ decode_image(const vector<unsigned char> &file_data, const string &normalize, pa
     for (int i = 0; i < 4; ++i) {
         resize_gpu_ptr[i] = thrust::raw_pointer_cast(dest_gpu.data()) + (*widths) * (*heights) * i * sizeof(float);
 //        resize_gpu_dst_ptr[i] = resize_gpu_dst_ptr[0] + dest_size.first * dest_size.second * i * sizeof(float);
-        cudaMalloc(&resize_gpu_dst_ptr[i], dest_size.first * dest_size.second * sizeof(float));
+        cudaMalloc(&resize_gpu_dst_ptr[i], dest_size.first * dest_size.second * sizeof(Npp32f));
     }
     CHECK_NPP(nppiResize_32f_P4R(const_cast<const Npp32f **>(resize_gpu_ptr), (*widths) * sizeof(Npp32f), srcSize,
                                  srcROI, resize_gpu_dst_ptr, dest_size.first * sizeof(Npp32f), dstSize,
                                  dstROI, NppiInterpolationMode::NPPI_INTER_LANCZOS))
     vector<float> dest_resized(dest_size.first * dest_size.second * 3);
-    auto *dest_malloc = static_cast<float *>(malloc(sizeof(float) * dest_size.first * dest_size.second * 3));
+    auto *dest_malloc = static_cast<float *>(malloc(sizeof(Npp32f) * dest_size.first * dest_size.second * 3));
     for (int i = 0; i < 3; ++i) {
-        cudaMemcpy(dest_malloc + sizeof(float) * dest_size.first * dest_size.second * i, resize_gpu_dst_ptr[i],
+        cudaMemcpy(dest_malloc + sizeof(Npp32f) * dest_size.first * dest_size.second * i, resize_gpu_dst_ptr[i],
                    dest_size.first * dest_size.second * sizeof(Npp32f),
                    cudaMemcpyKind::cudaMemcpyDeviceToHost);
 
@@ -196,7 +196,7 @@ int main() {
         cnt++;
         auto raw_img = decode_image(
                 file_content, "none",
-                {1080, 1080});
+                {2000, 2000});
 //        cudaFree(raw_img.first);
         cout << file.path() << endl;
         cout << raw_img.second.second.first << endl;

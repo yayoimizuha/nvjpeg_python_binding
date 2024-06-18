@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.28)
 project(detect_face CUDA CXX)
 
 set(CMAKE_CUDA_STANDARD 17)
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 #set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} --std=c++20")
@@ -32,6 +32,14 @@ target_link_libraries(pythonlib PRIVATE CUDA::nvjpeg pybind11::module pybind11::
 target_include_directories(pythonlib PUBLIC "${pybind11_INCLUDE_DIR}")
 pybind11_extension(pythonlib)
 
+
+add_library(simple_decode MODULE simple_decode.cu)
+set_target_properties(simple_decode PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+target_link_libraries(simple_decode PRIVATE CUDA::nvjpeg pybind11::module pybind11::lto pybind11::windows_extras Thrust::CUDA)
+target_include_directories(simple_decode PUBLIC "${pybind11_INCLUDE_DIR}")
+pybind11_extension(simple_decode)
+
+
 set(onnxruntime_gpu_dir [=[C:/Program Files/onnxruntime/]=])
 target_include_directories(detect_face PUBLIC "${onnxruntime_gpu_dir}/include")
 target_link_directories(detect_face PUBLIC "${onnxruntime_gpu_dir}/lib")
@@ -45,3 +53,10 @@ target_link_libraries(detect_face Thrust)
 #target_link_libraries(pythonlib Thrust)
 
 target_link_libraries(test CUDA::nvjpeg pybind11::module pybind11::lto pybind11::windows_extras Thrust::CUDA CUDA::nppig)
+
+#add_executable(simple_decode simple_decode.cu)
+#target_link_libraries(simple_decode CUDA::nvjpeg Thrust::CUDA)
+
+
+add_executable(simple_resize simple_resize.cu)
+target_link_libraries(simple_resize CUDA::nvjpeg Thrust::CUDA CUDA::nppig)
